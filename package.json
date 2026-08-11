@@ -1,0 +1,66 @@
+{
+	"name": "visualgdb-vscode",
+	"displayName": "VisualGDB for VS Code",
+	"description": "Launches Stand-Alone VisualGDB GUI for VS Code Projects",
+	"version": "0.0.1",
+	"publisher": "sysprogs",
+	"private": true,
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/sysprogs/visualgdb-vscode"
+	},
+	"engines": {
+		"vscode": "^1.100.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"main": "./out/extension.js",
+	"contributes": {
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "visualgdb",
+					"title": "VisualGDB",
+					"icon": "media/visualgdb.svg"
+				}
+			]
+		},
+		"views": {
+			"visualgdb": [
+				{
+					"id": "visualgdb-commands",
+					"name": "Commands",
+					"icon": "media/visualgdb.svg",
+					"contextualTitle": "VisualGDB Commands"
+				}
+			]
+		}
+	},
+	"scripts": {
+		"vscode:prepublish": "npm run compile",
+		"compile": "tsc -p ./",
+		"watch": "tsc -watch -p ./",
+		"lint": "eslint"
+	},
+	"devDependencies": {
+		"@eslint/js": "^9.13.0",
+		"@stylistic/eslint-plugin": "^2.9.0",
+		"@types/ftp": "^0.3.33",
+		"@types/mkdirp": "^0.5.2",
+		"@types/node": "^22",
+		"@types/rimraf": "^2.0.2",
+		"@types/vscode": "^1.100.0",
+		"eslint": "^9.13.0",
+		"typescript": "^5.9.2",
+		"typescript-eslint": "^8.39.0"
+	},
+	"dependencies": {
+		"ftp": "^0.3.10",
+		"jsonc-parser": "^0.4.2",
+		"minimist": "^1.2.6",
+		"mkdirp": "^0.5.1",
+		"rimraf": "^2.6.2"
+	}
+}

@@ -1,0 +1,1 @@
+This is a minimalistic VS Code extension that launches VisualGDB in stand-alone mode for VS Code workspaces
