@@ -1,0 +1,2 @@
+VisualGDB for VS Code is licensed under VisualGDB EULA
+See https://visualgdb.com/license.txt for more details.

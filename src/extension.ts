@@ -6,26 +6,16 @@ import * as jsonc from 'jsonc-parser';
 import { GetStringRegKey } from '@vscode/windows-registry';
 
 import { DepNodeProvider } from './nodeDependencies';
+import { LogScope, initOutputChannel } from './logScope';
+import { downloadCodeVROOM } from './downloadTools';
 
-let outputChannel: vscode.OutputChannel;
+export let outputChannel: vscode.OutputChannel;
 
-class LogScope {
-	private readonly startTime: number;
-
-	constructor() {
-		this.startTime = Date.now();
-	}
-
-	log(line: string): void {
-		const elapsed = Date.now() - this.startTime;
-		const elapsedStr = elapsed.toString().padStart(8, ' ');
-		outputChannel.appendLine(`[+${elapsedStr}] ${line}`);
-	}
-
-	logException(e: unknown): void {
-		const details = e instanceof Error ? e.message : String(e);
-		this.log(`***EXCEPTION*** ${details}`);
-	}
+export function showErrorWithOutputChannel(message: string): void {
+	vscode.window.showErrorMessage(message, 'View Diagnostic Output').then(choice => {
+		if (choice === 'View Diagnostic Output')
+			outputChannel.show();
+	});
 }
 
 function TryQueryLocationFromRegistry(hive: 'HKEY_CURRENT_USER' | 'HKEY_LOCAL_MACHINE', log: LogScope): string | undefined {
@@ -47,7 +37,7 @@ function TryQueryLocationFromRegistry(hive: 'HKEY_CURRENT_USER' | 'HKEY_LOCAL_MA
 	return undefined;
 }
 
-function findCodeVROOM(log: LogScope): string | undefined {
+export function findCodeVROOM(log: LogScope): string | undefined {
 	log.log('Locating CodeVROOM executable...');
 
 	if (process.platform !== 'win32')
@@ -131,11 +121,6 @@ async function evaluateAndCacheCommands(workspaceDir: string, log: LogScope): Pr
 	}
 }
 
-async function downloadCodeVROOM(log: LogScope): Promise<void> {
-	log.log('Downloading CodeVROOM...');
-	// TODO
-}
-
 async function locateCodeVROOMManually(log: LogScope): Promise<string | undefined> {
 	const isWindows = process.platform === 'win32';
 	const executable = isWindows ? 'CodeVROOM.exe' : 'CodeVROOM';
@@ -159,22 +144,26 @@ async function locateCodeVROOMManually(log: LogScope): Promise<string | undefine
 	return selected;
 }
 
-async function handleOpenWorkspaceInVisualGDB() {
+async function handleOpenWorkspaceInVisualGDB(extensionVersion: string) {
 	const log = new LogScope();
 
+	if (vscode.debug.activeDebugSession) {
+		vscode.window.showErrorMessage('Please stop debugging before launching VisualGDB');
+		return;
+	}
+
 	let codeVROOM = findCodeVROOM(log);
-	codeVROOM = undefined;	//for testing
 	if (!codeVROOM) {
 		const choice = await vscode.window.showWarningMessage(
-			'VisualGDB GUI requires the CodeVROOM shell',
-			'Download',
-			'Locate Manually',
-			'Close'
+			'VisualGDB requires CodeVROOM to display advanced GUI',
+			'Download CodeVROOM',
+			'Locate Manually'
 		);
 
-		if (choice === 'Download') {
-			await downloadCodeVROOM(log);
-			return;
+		if (choice === 'Download CodeVROOM') {
+			codeVROOM = await downloadCodeVROOM(log, extensionVersion);
+			if (!codeVROOM)
+				return;
 		} else if (choice === 'Locate Manually') {
 			codeVROOM = await locateCodeVROOMManually(log);
 			if (!codeVROOM)
@@ -186,7 +175,7 @@ async function handleOpenWorkspaceInVisualGDB() {
 
 	const workspaceDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 	if (!workspaceDir) {
-		vscode.window.showErrorMessage('No workspace is open');
+		showErrorWithOutputChannel('No workspace is open');
 		return;
 	}
 
@@ -199,8 +188,11 @@ async function handleOpenWorkspaceInVisualGDB() {
 export function activate(context: vscode.ExtensionContext) {
 	outputChannel = vscode.window.createOutputChannel('VisualGDB');
 	context.subscriptions.push(outputChannel);
+	initOutputChannel(outputChannel);
+
+	const extensionVersion: string = context.extension.packageJSON?.version ?? '0.0.0';
 
 	const nodeDependenciesProvider = new DepNodeProvider(context);
 	vscode.window.registerTreeDataProvider('visualgdb-commands', nodeDependenciesProvider);
-	vscode.commands.registerCommand('visualgdb.openWorkspaceInVisualGDB', () => handleOpenWorkspaceInVisualGDB());
+	vscode.commands.registerCommand('visualgdb.openWorkspaceInVisualGDB', () => handleOpenWorkspaceInVisualGDB(extensionVersion));
 }
