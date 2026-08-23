@@ -24,3 +24,10 @@ export let outputChannel: vscode.OutputChannel;
 export function initOutputChannel(channel: vscode.OutputChannel): void {
 	outputChannel = channel;
 }
+
+export function showErrorWithOutputChannel(message: string): void {
+	vscode.window.showErrorMessage(message, 'View Diagnostic Output').then(choice => {
+		if (choice === 'View Diagnostic Output')
+			outputChannel.show();
+	});
+}

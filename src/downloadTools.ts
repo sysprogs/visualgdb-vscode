@@ -5,13 +5,13 @@ import * as path from 'path';
 import * as os from 'os';
 import * as https from 'https';
 
-import { LogScope } from './logScope';
-import { findCodeVROOM, showErrorWithOutputChannel } from './extension';
+import { LogScope, showErrorWithOutputChannel } from './logScope';
+import { findCodeVROOM } from './codeVroomLocator';
 
-function downloadFile(url: string, destPath: string, log: LogScope, progress: vscode.Progress<{ message?: string; increment?: number }>): Promise<void> {
+function downloadFile(url: string, downloadedInstallerFile: string, log: LogScope, progress: vscode.Progress<{ message?: string; increment?: number }>): Promise<void> {
 	return new Promise((resolve, reject) => {
-		log.log(`Downloading ${url} -> ${destPath}`);
-		const file = fs.createWriteStream(destPath);
+		log.log(`Downloading ${url} -> ${downloadedInstallerFile}`);
+		const file = fs.createWriteStream(downloadedInstallerFile);
 
 		const request = (redirectUrl: string) => {
 			https.get(redirectUrl, response => {
@@ -48,11 +48,11 @@ function downloadFile(url: string, destPath: string, log: LogScope, progress: vs
 				response.pipe(file);
 				file.on('finish', () => file.close(() => resolve()));
 				file.on('error', err => {
-					fs.unlink(destPath, () => { });
+					fs.unlink(downloadedInstallerFile, () => { });
 					reject(err);
 				});
 			}).on('error', err => {
-				fs.unlink(destPath, () => { });
+				fs.unlink(downloadedInstallerFile, () => { });
 				reject(err);
 			});
 		};
@@ -70,14 +70,94 @@ function runProcessAndWait(executable: string, args: string[], log: LogScope): P
 	});
 }
 
+async function installOnWindows(
+	downloadedInstallerFile: string,
+	log: LogScope,
+	progress: vscode.Progress<{ message?: string; increment?: number }>
+): Promise<boolean> {
+	log.log('Download complete, running Windows installer...');
+	progress.report({ message: 'Installing...', increment: 100 });
+
+	let exitCode: number;
+	try {
+		exitCode = await runProcessAndWait(downloadedInstallerFile, ['--autoinstall'], log);
+	} catch (e) {
+		log.logException(e);
+		return false;
+	} finally {
+		try {
+			fs.unlinkSync(downloadedInstallerFile);
+		} catch (e) {
+			log.logException(e);
+		}
+	}
+
+	log.log(`Installer exited with code ${exitCode}`);
+	return exitCode === 0;
+}
+
+async function installOnLinux(
+	downloadedInstallerFile: string,
+	log: LogScope,
+	progress: vscode.Progress<{ message?: string; increment?: number }>
+): Promise<boolean> {
+	log.log('Download complete, extracting and running Linux installer...');
+	progress.report({ message: 'Installing...', increment: 100 });
+
+	const tempDir = path.dirname(downloadedInstallerFile);
+	try {
+		let exitCode: number;
+		try {
+			exitCode = await runProcessAndWait('tar', ['xf', downloadedInstallerFile, '-C', tempDir], log);
+		} catch (e) {
+			log.logException(e);
+			return false;
+		}
+
+		if (exitCode !== 0) {
+			log.log(`tar exited with code ${exitCode}`);
+			return false;
+		}
+
+		const scriptPath = path.join(tempDir, 'content', 'SysprogsAIWorkbench');
+		try {
+			exitCode = await runProcessAndWait(scriptPath, ['--autoinstall'], log);
+		} catch (e) {
+			log.logException(e);
+			return false;
+		}
+
+		log.log(`Installer script exited with code ${exitCode}`);
+		return exitCode === 0;
+	} finally {
+		try {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		} catch (e) {
+			log.logException(e);
+		}
+	}
+}
+
+function installOnMac(log: LogScope): boolean {
+	log.log('macOS installation is not supported');
+	showErrorWithOutputChannel('CodeVROOM installation is not supported on macOS');
+	return false;
+}
+
 export async function downloadCodeVROOM(log: LogScope, extensionVersion: string): Promise<string | undefined> {
 	const platform = process.platform;
-	const url = `https://sysprogs.com/CodeVROOM/download/vscode-get?platform=${encodeURIComponent(platform)}&ver=${encodeURIComponent(extensionVersion)}`;
-	const isWindows = platform === 'win32';
-	const exeName = isWindows ? 'CodeVROOM-setup.exe' : 'CodeVROOM-setup';
-	const destPath = path.join(os.tmpdir(), exeName);
+	const url = `https://sysprogs.com/CodeVROOM/download/autofetch/vscode?platform=${encodeURIComponent(platform)}&extver=${encodeURIComponent(extensionVersion)}`;
 
 	log.log(`CodeVROOM download URL: ${url}`);
+
+	let downloadedInstallerFile: string;
+	if (platform === 'linux') {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codevroom-'));
+		downloadedInstallerFile = path.join(tempDir, 'CodeVROOM.tar.xz');
+	} else {
+		const exeName = platform === 'win32' ? 'CodeVROOM-setup.exe' : 'CodeVROOM-setup';
+		downloadedInstallerFile = path.join(os.tmpdir(), exeName);
+	}
 
 	const installSucceeded = await vscode.window.withProgress(
 		{
@@ -87,40 +167,26 @@ export async function downloadCodeVROOM(log: LogScope, extensionVersion: string)
 		},
 		async progress => {
 			progress.report({ increment: 0 });
+
+			if (platform === 'darwin')
+				return installOnMac(log);
+
 			try {
-				await downloadFile(url, destPath, log, progress);
+				await downloadFile(url, downloadedInstallerFile, log, progress);
 			} catch (e) {
 				log.logException(e);
 				return false;
 			}
 
-			log.log('Download complete, running installer...');
-			progress.report({ message: 'Installing...', increment: 100 });
-
-			if (!isWindows) {
-				try {
-					fs.chmodSync(destPath, 0o755);
-				} catch (e) {
-					log.logException(e);
-				}
-			}
-
-			let exitCode: number;
-			try {
-				exitCode = await runProcessAndWait(destPath, ['--vscodeinstall'], log);
-			} catch (e) {
-				log.logException(e);
+			if (platform === 'win32')
+				return await installOnWindows(downloadedInstallerFile, log, progress);
+			else if (platform === 'linux')
+				return await installOnLinux(downloadedInstallerFile, log, progress);
+			else {
+				log.log(`Unsupported platform: ${platform}`);
+				showErrorWithOutputChannel(`CodeVROOM installation is not supported on platform: ${platform}`);
 				return false;
-			} finally {
-				try {
-					fs.unlinkSync(destPath);
-				} catch (e) {
-					log.logException(e);
-				}
 			}
-
-			log.log(`Installer exited with code ${exitCode}`);
-			return exitCode === 0;
 		}
 	);
 
