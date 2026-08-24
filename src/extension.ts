@@ -140,7 +140,10 @@ async function handleOpenWorkspaceInVisualGDB(extensionVersion: string) {
 	await evaluateAndCacheCommands(workspaceDir, log);
 
 	log.log(`Launching ${codeVROOM}`);
-	child_process.spawn(codeVROOM, ['--vscode', workspaceDir], { detached: true, stdio: 'ignore' }).unref();
+	if (process.platform === 'darwin' && codeVROOM.endsWith('.app'))
+		child_process.spawn('open', ['-a', codeVROOM, '--args', '--vscode', workspaceDir], { detached: true, stdio: 'ignore' }).unref();
+	else
+		child_process.spawn(codeVROOM, ['--vscode', workspaceDir], { detached: true, stdio: 'ignore' }).unref();
 }
 
 export function activate(context: vscode.ExtensionContext) {

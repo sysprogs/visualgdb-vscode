@@ -40,7 +40,16 @@ function findCodeVROOMWindows(log: LogScope): string | undefined {
 }
 
 function findCodeVROOMMac(log: LogScope): string | undefined {
-	return undefined;
+	const appPath = '/Applications/CodeVROOM.app';
+	log.log(`Checking for ${appPath}...`);
+	try {
+		if (fs.existsSync(appPath))
+			return appPath;
+	} catch (e) {
+		log.logException(e);
+	}
+
+	return findCodeVROOMLinux(log);
 }
 
 function findCodeVROOMLinux(log: LogScope): string | undefined {

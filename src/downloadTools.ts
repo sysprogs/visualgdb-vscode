@@ -138,15 +138,55 @@ async function installOnLinux(
 	}
 }
 
-function installOnMac(log: LogScope): boolean {
-	log.log('macOS installation is not supported');
-	showErrorWithOutputChannel('CodeVROOM installation is not supported on macOS');
-	return false;
+async function installOnMac(
+	downloadedInstallerFile: string,
+	log: LogScope,
+	progress: vscode.Progress<{ message?: string; increment?: number }>
+): Promise<boolean> {
+	log.log('Download complete, prompting user to install DMG...');
+	progress.report({ message: 'Waiting for user...', increment: 100 });
+
+	const dmgUri = vscode.Uri.file(downloadedInstallerFile);
+	const dmgFolderUri = vscode.Uri.file(path.dirname(downloadedInstallerFile));
+
+	const openChoice = await vscode.window.showInformationMessage(
+		'Please copy CodeVROOM to the Applications folder.',
+		'Open DMG File',
+		'Open DMG Location'
+	);
+
+	if (!openChoice)
+		return false;
+
+	if (openChoice === 'Open DMG File')
+		await vscode.env.openExternal(dmgUri);
+	else
+		await vscode.env.openExternal(dmgFolderUri);
+
+	const confirmChoice = await vscode.window.showInformationMessage(
+		'Please confirm that CodeVROOM has been copied to the Applications folder.',
+		'Yes',
+		'No'
+	);
+
+	if (confirmChoice !== 'Yes')
+		return false;
+
+	const appPath = '/Applications/CodeVROOM.app';
+	if (!fs.existsSync(appPath)) {
+		log.log(`Could not find ${appPath}`);
+		showErrorWithOutputChannel(`Could not find ${appPath}. Please make sure CodeVROOM was copied to the Applications folder.`);
+		return false;
+	}
+
+	log.log('CodeVROOM found in Applications folder.');
+	return true;
 }
 
 export async function downloadCodeVROOM(log: LogScope, extensionVersion: string): Promise<string | undefined> {
 	const platform = process.platform;
-	const url = `https://sysprogs.com/CodeVROOM/download/autofetch/vscode?platform=${encodeURIComponent(platform)}&extver=${encodeURIComponent(extensionVersion)}`;
+	const arch = process.arch;
+	const url = `https://sysprogs.com/CodeVROOM/download/autofetch/vscode?platform=${encodeURIComponent(platform)}&arch=${encodeURIComponent(arch)}&extver=${encodeURIComponent(extensionVersion)}`;
 
 	log.log(`CodeVROOM download URL: ${url}`);
 
@@ -154,6 +194,8 @@ export async function downloadCodeVROOM(log: LogScope, extensionVersion: string)
 	if (platform === 'linux') {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codevroom-'));
 		downloadedInstallerFile = path.join(tempDir, 'CodeVROOM.tar.xz');
+	} else if (platform === 'darwin') {
+		downloadedInstallerFile = path.join(os.tmpdir(), 'CodeVROOM.dmg');
 	} else {
 		const exeName = platform === 'win32' ? 'CodeVROOM-setup.exe' : 'CodeVROOM-setup';
 		downloadedInstallerFile = path.join(os.tmpdir(), exeName);
@@ -168,9 +210,6 @@ export async function downloadCodeVROOM(log: LogScope, extensionVersion: string)
 		async progress => {
 			progress.report({ increment: 0 });
 
-			if (platform === 'darwin')
-				return installOnMac(log);
-
 			try {
 				await downloadFile(url, downloadedInstallerFile, log, progress);
 			} catch (e) {
@@ -182,6 +221,8 @@ export async function downloadCodeVROOM(log: LogScope, extensionVersion: string)
 				return await installOnWindows(downloadedInstallerFile, log, progress);
 			else if (platform === 'linux')
 				return await installOnLinux(downloadedInstallerFile, log, progress);
+			else if (platform === 'darwin')
+				return await installOnMac(downloadedInstallerFile, log, progress);
 			else {
 				log.log(`Unsupported platform: ${platform}`);
 				showErrorWithOutputChannel(`CodeVROOM installation is not supported on platform: ${platform}`);
