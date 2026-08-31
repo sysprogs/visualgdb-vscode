@@ -11,7 +11,7 @@ import { findCodeVROOM } from './codeVroomLocator';
 
 export let outputChannel: vscode.OutputChannel;
 
-function LoadCommandReferencesFromJSON(dir: string, filename: string, result: Set<string>, log: LogScope): void {
+function LoadCommandReferencesFromJSON(dir: string, filename: string, commandResult: Set<string>, configResult: Set<string>, log: LogScope): void {
 	let raw: string;
 	try {
 		raw = fs.readFileSync(path.join(dir, filename), 'utf8');
@@ -24,10 +24,14 @@ function LoadCommandReferencesFromJSON(dir: string, filename: string, result: Se
 
 	function walk(node: unknown): void {
 		if (typeof node === 'string') {
-			const regex = /\$\{command:([^}]+)\}/g;
+			const commandRegex = /\$\{command:([^}]+)\}/g;
 			let match: RegExpExecArray | null;
-			while ((match = regex.exec(node)) !== null)
-				result.add(match[1]);
+			while ((match = commandRegex.exec(node)) !== null)
+				commandResult.add(match[1]);
+
+			const configRegex = /\$\{config:([^}]+)\}/g;
+			while ((match = configRegex.exec(node)) !== null)
+				configResult.add(match[1]);
 		} else if (Array.isArray(node)) {
 			for (const item of node)
 				walk(item);
@@ -41,10 +45,14 @@ function LoadCommandReferencesFromJSON(dir: string, filename: string, result: Se
 }
 
 async function evaluateAndCacheCommands(workspaceDir: string, log: LogScope): Promise<void> {
+	const startTime = Date.now();
 	const vscodeDir = path.join(workspaceDir, '.vscode');
 	const commands = new Set<string>();
-	LoadCommandReferencesFromJSON(vscodeDir, 'launch.json', commands, log);
-	LoadCommandReferencesFromJSON(vscodeDir, 'cmake-kits.json', commands, log);
+	const configs = new Set<string>();
+	
+	LoadCommandReferencesFromJSON(vscodeDir, 'launch.json', commands, configs, log);
+	LoadCommandReferencesFromJSON(vscodeDir, 'cmake-kits.json', commands, configs, log);
+	LoadCommandReferencesFromJSON(vscodeDir, 'c_cpp_properties.json', commands, configs, log);
 
 	log.log(`Evaluating workspace variables...`);
 
@@ -52,7 +60,7 @@ async function evaluateAndCacheCommands(workspaceDir: string, log: LogScope): Pr
 
 	for (const cmd of commands) {
 		try {
-			log.log(`Evaluating ${cmd}`);
+			log.log(`Evaluating command: ${cmd}`);
 			const result = await vscode.commands.executeCommand(cmd);
 			vscodeVars[`command:${cmd}`] = result;
 		} catch (e) {
@@ -61,15 +69,40 @@ async function evaluateAndCacheCommands(workspaceDir: string, log: LogScope): Pr
 		}
 	}
 
-	const cache = {
+	for (const conf of configs) {
+		try {
+			log.log(`Evaluating config: ${conf}`);
+			const parts = conf.split('.');
+			const section = parts.shift();
+			const key = parts.join('.');
+			if (section) {
+				const value = vscode.workspace.getConfiguration(section).get(key);
+				vscodeVars[`config:${conf}`] = value;
+			}
+		} catch (e) {
+			log.logException(e);
+			vscodeVars[`config:${conf}`] = null;
+		}
+	}
+
+	const cache: any = {
 		'vscode-vars': vscodeVars,
 		'environment': process.env,
 		'diagnostics': {
-			'eval_time': Date.now()
+			'eval_time': Date.now() - startTime
 		}
 	};
 
-	log.log(`Evaluated ${commands.size} variables`);
+	try {
+		const buildDir = vscode.workspace.getConfiguration('cmake').get('buildDirectory');
+		cache['cmakeConfiguration'] = {
+			'buildDirectory': buildDir
+		};
+	} catch (e) {
+		log.logException(e);
+	}
+
+	log.log(`Evaluated ${commands.size} commands and ${configs.size} configs`);
 
 	const cacheFilePath = path.join(vscodeDir, 'sysprogs-var-cache.json');
 	try {
@@ -157,7 +190,7 @@ export function activate(context: vscode.ExtensionContext) {
 	const nodeDependenciesProvider = new VisualGDBNodeProvider(context);
 	vscode.window.registerTreeDataProvider('visualgdb-commands', nodeDependenciesProvider);
 	vscode.commands.registerCommand('visualgdb.openWorkspaceInVisualGDB', () => handleOpenWorkspaceInVisualGDB(extensionVersion));
-	vscode.commands.registerCommand('visualgdb.analyzeCMake', analyzeCMake);
+	//vscode.commands.registerCommand('visualgdb.analyzeCMake', analyzeCMake);
 }
 
 async function analyzeCMake() {
